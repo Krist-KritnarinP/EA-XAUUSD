@@ -1,0 +1,219 @@
+//@version=6
+indicator("Gold POI Sniper v3.5 - Full Institutional SMC & Radar [M15]", overlay=true, max_lines_count=500, max_boxes_count=500, max_labels_count=500)
+
+// ==============================================================================
+// 1. CONFIGURATION & SESSIONS (THAI TIME GMT+7)
+// ==============================================================================
+grp_time = "⏰ Trading Sessions (Thai Time GMT+7)"
+tz_offset      = input.string("UTC+7", "TradingView Timezone", options=["UTC+7", "UTC+2", "UTC+0"], group=grp_time)
+session_asian  = input.session("0900-1300:23456", "1. Asian Range Box (04:00-08:00 MT4)", group=grp_time)
+session_london = input.session("1300-1630:23456", "2. London Dual-Engine (08:00-11:30 MT4)", group=grp_time)
+session_ny     = input.session("2000-0130:23456", "3. New York POI Prime (15:00-20:30 MT4)", group=grp_time)
+
+grp_smc = "📐 SMC Market Structure (BOS / CHoCH / Sweeps)"
+swing_len       = input.int(5, "Swing Pivot Length (M15 Structural Points)", minval=3, maxval=15, group=grp_smc)
+wick_threshold  = input.float(0.35, "Rejection Wick Threshold (35%)", minval=0.2, maxval=0.6, step=0.05, group=grp_smc)
+show_bos_choch  = input.bool(true, "Show BOS / CHoCH Structural Breaks", group=grp_smc)
+show_asian_box  = input.bool(true, "Draw Asian Range Physical Box & 50% EQ", group=grp_smc)
+show_dashboard  = input.bool(true, "Show Institutional Radar Dashboard", group=grp_smc)
+show_ema        = input.bool(true, "Show Institutional EMAs (EMA 50 & EMA 200)", group=grp_smc)
+
+// Institutional EMAs
+ema50  = ta.ema(close, 50)
+ema200 = ta.ema(close, 200)
+plot(show_ema ? ema50 : na,  "EMA 50 (London Trend Filter)", color=color.new(color.yellow, 20), linewidth=1)
+plot(show_ema ? ema200 : na, "EMA 200 (NY Structural Base)", color=color.new(color.white, 30), linewidth=2)
+
+// ==============================================================================
+// 2. SESSION TIMING & ASIAN RANGE BOX
+// ==============================================================================
+in_asian  = not na(time(timeframe.period, session_asian, tz_offset))
+in_london = not na(time(timeframe.period, session_london, tz_offset))
+in_ny     = not na(time(timeframe.period, session_ny, tz_offset))
+
+// Clean boolean state transitions (No na() or ta.change on bool)
+is_new_day   = ta.change(time("D")) != 0
+asian_ended  = in_asian[1] and not in_asian
+
+var float a_high = na
+var float a_low  = na
+var int   a_start_bar = na
+var box   asian_box_obj = na
+var line  asian_eq_line = na
+
+var float stored_ah = na
+var float stored_al = na
+
+if is_new_day
+    a_high := na
+    a_low  := na
+
+// Track Asian Session High/Low
+if in_asian
+    if na(a_high) or high > a_high
+        a_high := high
+    if na(a_low) or low < a_low
+        a_low := low
+    if na(a_start_bar)
+        a_start_bar := bar_index
+
+    if show_asian_box
+        if na(asian_box_obj)
+            asian_box_obj := box.new(left=a_start_bar, top=a_high, right=bar_index, bottom=a_low, border_color=color.aqua, border_width=1, border_style=line.style_dashed, bgcolor=color.new(color.blue, 90))
+        else
+            box.set_top(asian_box_obj, a_high)
+            box.set_bottom(asian_box_obj, a_low)
+            box.set_right(asian_box_obj, bar_index)
+
+else if asian_ended
+    stored_ah := a_high
+    stored_al := a_low
+    a_start_bar := na
+    if not na(asian_box_obj) and show_asian_box
+        box.set_right(asian_box_obj, bar_index)
+        box.set_bgcolor(asian_box_obj, color.new(color.blue, 93))
+        float a_eq = (stored_ah + stored_al) / 2.0
+        asian_eq_line := line.new(box.get_left(asian_box_obj), a_eq, bar_index, a_eq, color=color.new(color.gray, 20), style=line.style_dotted, width=1)
+    asian_box_obj := na
+
+// Daily PDH / PDL
+pdh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
+pdl = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_on)
+
+// Session Background Highlights
+bgcolor(in_asian  ? color.new(color.blue, 95)   : na, title="Asian Background")
+bgcolor(in_london ? color.new(color.purple, 94) : na, title="London Background")
+bgcolor(in_ny     ? color.new(color.orange, 94) : na, title="NY POI Background")
+
+// Persistent Key Level Projections on Latest Bars
+var line l_pdh = na
+var line l_pdl = na
+var line l_ah  = na
+var line l_al  = na
+
+if barstate.islast
+    line.delete(l_pdh)
+    line.delete(l_pdl)
+    line.delete(l_ah)
+    line.delete(l_al)
+
+    l_pdh := line.new(bar_index - 70, pdh, bar_index + 15, pdh, color=color.red, width=2, style=line.style_dashed)
+    l_pdl := line.new(bar_index - 70, pdl, bar_index + 15, pdl, color=color.green, width=2, style=line.style_dashed)
+    
+    if not na(stored_ah) and not na(stored_al)
+        l_ah := line.new(bar_index - 50, stored_ah, bar_index + 15, stored_ah, color=color.orange, width=2)
+        l_al := line.new(bar_index - 50, stored_al, bar_index + 15, stored_al, color=color.aqua, width=2)
+
+// ==============================================================================
+// 3. SMC MARKET STRUCTURE: BOS & CHoCH ENGINE (DIRECT PIVOT CROSS)
+// ==============================================================================
+p_hi = ta.pivothigh(high, swing_len, swing_len)
+p_lo = ta.pivotlow(low, swing_len, swing_len)
+
+var float prev_sh = na
+var float prev_sl = na
+var int   prev_sh_bar = na
+var int   prev_sl_bar = na
+
+// Trend direction: 1 = Bullish, -1 = Bearish
+var int smc_trend = 1
+
+if not na(p_hi)
+    prev_sh := p_hi
+    prev_sh_bar := bar_index[swing_len]
+
+if not na(p_lo)
+    prev_sl := p_lo
+    prev_sl_bar := bar_index[swing_len]
+
+// Deterministic Break of Structure without conditional crossover warnings
+bull_break = not na(prev_sh) and (close[1] <= prev_sh) and (close > prev_sh)
+if bull_break and show_bos_choch
+    bool is_choch = (smc_trend == -1)
+    string txt = is_choch ? "CHoCH 🟢" : "BOS 🟢"
+    color col  = is_choch ? color.lime : color.green
+    line.new(prev_sh_bar, prev_sh, bar_index, prev_sh, color=col, width=1, style=line.style_solid)
+    label.new(bar_index, high, txt, color=color.new(col, 20), textcolor=color.white, style=label.style_label_down, size=size.tiny)
+    smc_trend := 1
+    prev_sh := na
+
+bear_break = not na(prev_sl) and (close[1] >= prev_sl) and (close < prev_sl)
+if bear_break and show_bos_choch
+    bool is_choch = (smc_trend == 1)
+    string txt = is_choch ? "CHoCH 🔴" : "BOS 🔴"
+    color col  = is_choch ? color.maroon : color.red
+    line.new(prev_sl_bar, prev_sl, bar_index, prev_sl, color=col, width=1, style=line.style_solid)
+    label.new(bar_index, low, txt, color=color.new(col, 20), textcolor=color.white, style=label.style_label_up, size=size.tiny)
+    smc_trend := -1
+    prev_sl := na
+
+// ==============================================================================
+// 4. CANDLE REJECTION WICK & SMC LIQUIDITY SWEEP SIGNALS
+// ==============================================================================
+c_range    = high - low
+upper_wick = high - math.max(open, close)
+lower_wick = math.min(open, close) - low
+u_ratio    = c_range > 0 ? (upper_wick / c_range) : 0.0
+l_ratio    = c_range > 0 ? (lower_wick / c_range) : 0.0
+
+// A. New York POI Sweeps (20:00 - 01:30 Thai)
+ny_sweep_sell = in_ny and (high >= stored_ah or high >= pdh) and (u_ratio >= wick_threshold) and (close < open)
+ny_sweep_buy  = in_ny and (low <= stored_al or low <= pdl) and (l_ratio >= wick_threshold) and (close > open)
+
+// B. London Judas Sweep Fade (13:00 - 16:30 Thai)
+ld_sweep_sell = in_london and (high > stored_ah) and (close < stored_ah) and (u_ratio >= wick_threshold) and (close < open)
+ld_sweep_buy  = in_london and (low < stored_al) and (close > stored_al) and (l_ratio >= wick_threshold) and (close > open)
+
+plotshape(ny_sweep_sell, title="NY POI SELL Trigger", location=location.abovebar, color=color.red, style=shape.triangledown, size=size.small, text="🎯 NY SELL\n[Sweep]")
+plotshape(ny_sweep_buy,  title="NY POI BUY Trigger",  location=location.belowbar, color=color.green, style=shape.triangleup, size=size.small, text="🎯 NY BUY\n[Sweep]")
+
+plotshape(ld_sweep_sell, title="Judas SELL Trap", location=location.abovebar, color=color.fuchsia, style=shape.arrowdown, size=size.small, text="🪤 Judas SELL\n[Fade]")
+plotshape(ld_sweep_buy,  title="Judas BUY Trap",  location=location.belowbar, color=color.aqua, style=shape.arrowup, size=size.small, text="🪤 Judas BUY\n[Fade]")
+
+// ==============================================================================
+// 5. LIVE INSTITUTIONAL RADAR DASHBOARD (TOP RIGHT)
+// ==============================================================================
+var table dash = table.new(position.top_right, 2, 9, bgcolor=color.new(color.black, 15), border_color=color.gray, border_width=1)
+
+if barstate.islast and show_dashboard
+    string sess_txt = in_ny ? "🗽 NY POI Prime (Active)" : (in_london ? "🇬🇧 London Dual (Active)" : (in_asian ? "🌏 Asian Box Formation" : "🛡️ Standby / Closed"))
+    color  sess_bg  = in_ny ? color.orange : (in_london ? color.purple : (in_asian ? color.blue : color.gray))
+
+    float upper_res = not na(stored_ah) ? math.max(stored_ah, pdh) : pdh
+    float lower_sup = not na(stored_al) ? math.min(stored_al, pdl) : pdl
+
+    float dist_res = upper_res - close
+    float dist_sup = close - lower_sup
+
+    table.cell(dash, 0, 0, "🎯 GOLD POI SNIPER v3.5", bgcolor=color.navy, text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 0, "M15 RADAR HUD", bgcolor=color.navy, text_color=color.yellow, text_size=size.small)
+
+    table.cell(dash, 0, 1, "Session ตลาด:", text_color=color.silver, text_size=size.small)
+    table.cell(dash, 1, 1, sess_txt, bgcolor=color.new(sess_bg, 70), text_color=color.white, text_size=size.small)
+
+    table.cell(dash, 0, 2, "โครงสร้าง SMC:", text_color=color.silver, text_size=size.small)
+    string tr_txt = (smc_trend == 1) ? "BULLISH 🟢 (Higher Highs)" : "BEARISH 🔴 (Lower Lows)"
+    table.cell(dash, 1, 2, tr_txt, text_color=(smc_trend == 1) ? color.green : color.red, text_size=size.small)
+
+    table.cell(dash, 0, 3, "ราคาทองสด (Live):", text_color=color.silver, text_size=size.small)
+    table.cell(dash, 1, 3, "$" + str.tostring(close, "#.##"), text_color=color.yellow, text_size=size.small)
+
+    table.cell(dash, 0, 4, "🔴 จุดเล็งดัก SELL:", text_color=color.red, text_size=size.small)
+    string s_txt = "$" + str.tostring(upper_res, "#.##") + " (ห่าง " + str.tostring(dist_res, "#.##") + "$)"
+    table.cell(dash, 1, 4, s_txt, text_color=color.white, text_size=size.small)
+
+    table.cell(dash, 0, 5, "🟢 จุดเล็งดัก BUY:", text_color=color.green, text_size=size.small)
+    string b_txt = "$" + str.tostring(lower_sup, "#.##") + " (ห่าง " + str.tostring(dist_sup, "#.##") + "$)"
+    table.cell(dash, 1, 5, b_txt, text_color=color.white, text_size=size.small)
+
+    table.cell(dash, 0, 6, "📦 Asian Box Range:", text_color=color.silver, text_size=size.small)
+    string ab_txt = not na(stored_ah) ? ("$" + str.tostring(stored_al, "#.#") + " - $" + str.tostring(stored_ah, "#.#")) : "รอตลาด Asian ปิด 13:00 น."
+    table.cell(dash, 1, 6, ab_txt, text_color=color.aqua, text_size=size.small)
+
+    table.cell(dash, 0, 7, "🧱 Previous Day H/L:", text_color=color.silver, text_size=size.small)
+    string pd_txt = "PDH: $" + str.tostring(pdh, "#.#") + " | PDL: $" + str.tostring(pdl, "#.#")
+    table.cell(dash, 1, 7, pd_txt, text_color=color.silver, text_size=size.small)
+
+    table.cell(dash, 0, 8, "⚡ ปฏิเสธราคา (Wick):", text_color=color.silver, text_size=size.small)
+    string w_txt = u_ratio >= 0.35 ? ("⚠️ ไส้บน " + str.tostring(u_ratio*100, "#") + "% [กดลง]") : (l_ratio >= 0.35 ? ("⚠️ ไส้ล่าง " + str.tostring(l_ratio*100, "#") + "% [ดันขึ้น]") : "ไม่มีหางปฏิเสธ (Neutral)")
+    table.cell(dash, 1, 8, w_txt, text_color=u_ratio >= 0.35 ? color.red : (l_ratio >= 0.35 ? color.green : color.gray), text_size=size.small)

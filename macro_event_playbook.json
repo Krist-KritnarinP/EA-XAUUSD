@@ -1,0 +1,42 @@
+{
+  "FOMC": {
+    "name": "Federal Reserve Interest Rate Decision (FOMC / Powell)",
+    "samples": 64,
+    "avg_range_usd": 46.5,
+    "fakeout_duration_mins": "5 - 15 นาทีแรก (สวิงสองฝั่งก่อนเลือกทางช่วงแถลงข่าว 01:30 น.)",
+    "reversion_fibo": "Fibo 50.0% – 61.8% Golden Ratio",
+    "manual_advice": "ห้ามไล่ราคาเด็ดขาด ดัก Sell เหนือ Fibo 38.2%/50% หรือดัก Buy ที่ฐาน Liquidity เก่า"
+  },
+  "CPI": {
+    "name": "US Consumer Price Index (CPI Inflation)",
+    "samples": 96,
+    "avg_range_usd": 34.2,
+    "fakeout_duration_mins": "3 - 5 นาทีแรก (มักกระชากกิน SL รายย่อยสองฝั่ง)",
+    "reversion_fibo": "Fibo 38.2% – 50.0%",
+    "manual_advice": "รอ M15 จบแท่งแรก หากตัวเลขต่ำกว่าคาดให้ดัก Buy ตามแนว Reversal"
+  },
+  "NFP": {
+    "name": "US Non-Farm Payrolls & Unemployment Rate",
+    "samples": 96,
+    "avg_range_usd": 36.8,
+    "fakeout_duration_mins": "1 - 3 นาทีแรก (กระตุกตามตัวเลข Headline ก่อนวิ่งตามค่าจ้างเฉลี่ย)",
+    "reversion_fibo": "Fibo 50.0%",
+    "manual_advice": "รอให้ราคาชนแนวรับแนวต้าน Fibo Cluster โซนแรก แล้วเข้าเทรด Mean Reversion"
+  },
+  "PPI": {
+    "name": "US Producer Price Index (PPI)",
+    "samples": 96,
+    "avg_range_usd": 18.5,
+    "fakeout_duration_mins": "1 - 3 นาที",
+    "reversion_fibo": "Fibo 23.6% – 38.2%",
+    "manual_advice": "ความผันผวนปานกลาง สามารถตั้ง Limit รอรับแรงกระแทกได้"
+  },
+  "DEFAULT": {
+    "name": "High-Impact US Macro Economic Release",
+    "samples": 450,
+    "avg_range_usd": 24.5,
+    "fakeout_duration_mins": "3 - 5 นาทีแรก",
+    "reversion_fibo": "Fibo 38.2%",
+    "manual_advice": "เว้นระยะ 5 นาทีแรกหลังข่าวออก รอรับการทดสอบที่กรอบแนวรับแนวต้าน"
+  }
+}

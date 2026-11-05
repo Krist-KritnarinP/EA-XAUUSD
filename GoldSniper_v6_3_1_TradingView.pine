@@ -1,0 +1,342 @@
+//@version=6
+indicator("Gold Sniper v6.3.2 Institutional Apex [Dynamic SMC & Tri-Session]", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500)
+
+// ====================================================================
+// 1. INPUT SETTINGS & CONFIGURATION
+// ====================================================================
+var string G_TIME    = "1. Timezone & Sessions"
+tzInput              = input.string("UTC+3", "Broker Timezone (XM/IC = UTC+3)", group=G_TIME, tooltip="Matches MT4 Server Time (EET/EEST)")
+showAsianBox         = input.bool(true, "Show Live Developing Asian Box", group=G_TIME)
+showAsianLines       = input.bool(true, "Show Dynamic Extending Asian High/Low Lines", group=G_TIME)
+showAsianLabels      = input.bool(true, "Show Price Labels on Asian Lines", group=G_TIME)
+showSessionBg        = input.bool(true, "Highlight Active Sessions Background", group=G_TIME)
+
+var string G_TRADE   = "2. Dynamic Trade Projection (TP/SL Lines)"
+showTradeLines       = input.bool(true, "Show Dynamic Entry / TP / SL Lines", group=G_TRADE)
+showTradeZones       = input.bool(true, "Show Risk/Reward Target Fill Zones", group=G_TRADE)
+signalTriggerMode    = input.string("Bar Close (Confirmed - No Repaint)", "Signal Trigger Mode", options=["Bar Close (Confirmed - No Repaint)", "Real-Time Live (Dynamic Tick)"], group=G_TRADE)
+
+var string G_ASIA    = "3. Engine A: Asian Squeeze Sweeper (02:30 - 06:00)"
+enableAsian          = input.bool(true, "Enable Asian Sweeper Signals", group=G_ASIA)
+asianMinRange        = input.float(3.0, "Min Asian Range ($)", step=0.5, group=G_ASIA)
+asianMaxRange        = input.float(10.0, "Max Asian Range ($) [Squeeze Filter]", step=0.5, group=G_ASIA)
+asianMinSweep        = input.float(1.0, "Min Sweep Beyond Range ($)", step=0.1, group=G_ASIA)
+asianMinWickRatio    = input.float(0.40, "Min Wick Rejection Ratio (40%)", step=0.05, group=G_ASIA)
+asianTP_USD          = input.float(5.0, "Asian TP ($)", group=G_ASIA)
+asianSL_USD          = input.float(6.0, "Asian SL ($)", group=G_ASIA)
+
+var string G_LONDON  = "4. Engine B: London Institutional Sniper (08:00 - 11:30)"
+enableLondon         = input.bool(true, "Enable London Sniper Signals", group=G_LONDON)
+londonPenetration    = input.float(2.0, "Judas Penetration ($)", step=0.5, group=G_LONDON)
+londonMinBodyRatio   = input.float(0.60, "Min Momentum Candle Body (60%)", step=0.05, group=G_LONDON)
+londonRVOL_Mult      = input.float(1.10, "Min RVOL Multiplier", step=0.05, group=G_LONDON)
+londonTP_USD         = input.float(28.0, "London Sniper TP ($)", group=G_LONDON)
+londonSL_USD         = input.float(8.0, "London Sniper SL ($)", group=G_LONDON)
+
+var string G_NY      = "5. Engine C: New York Confirmed Reversal (15:00 - 17:30)"
+enableNY             = input.bool(true, "Enable New York Reversal Signals", group=G_NY)
+ny_MinADX            = input.float(22.0, "Min ADX (14)", step=1.0, group=G_NY)
+ny_RVOL_Mult         = input.float(1.15, "Min RVOL Multiplier", step=0.05, group=G_NY)
+nyTP_USD             = input.float(16.0, "New York TP ($)", group=G_NY)
+nySL_USD             = input.float(8.0, "New York SL ($)", group=G_NY)
+
+var string G_IND     = "6. Indicator Settings & Filters"
+emaFastLen           = input.int(50, "M15 Fast EMA", group=G_IND)
+emaSlowLen           = input.int(200, "M15 Slow EMA", group=G_IND)
+showEMAs             = input.bool(true, "Show M15 EMA 50 & 200 Lines", group=G_IND)
+showDashboard        = input.bool(true, "Show Institutional Table Dashboard", group=G_IND)
+
+// ====================================================================
+// 2. INDICATOR CALCULATIONS & HIGHER TIMEFRAME BIAS
+// ====================================================================
+ema50_m15  = ta.ema(close, emaFastLen)
+ema200_m15 = ta.ema(close, emaSlowLen)
+
+plot(showEMAs ? ema50_m15 : na, "EMA 50 (M15)", color=color.new(#00e5ff, 0), linewidth=2)
+plot(showEMAs ? ema200_m15 : na, "EMA 200 (M15)", color=color.new(#ff9100, 0), linewidth=2)
+
+// Higher Timeframe (H1) Macro Trend Filter
+h1_ema50  = request.security(syminfo.tickerid, "60", ta.ema(close, 50), lookahead=barmerge.lookahead_off)
+h1_ema200 = request.security(syminfo.tickerid, "60", ta.ema(close, 200), lookahead=barmerge.lookahead_off)
+isH1Bull  = h1_ema50 > h1_ema200
+isH1Bear  = h1_ema50 < h1_ema200
+
+// RVOL (Relative Volume vs SMA 20)
+volSMA20 = ta.sma(volume, 20)
+rvol     = volSMA20 > 0 ? (volume / volSMA20) : 1.0
+
+// ADX (14)
+[diplus, diminus, adxVal] = ta.dmi(14, 14)
+
+// Candle Metrics
+candleRange = high - low
+candleBody  = math.abs(close - open)
+upperWick   = high - math.max(open, close)
+lowerWick   = math.min(open, close) - low
+bodyRatio   = candleRange > 0 ? (candleBody / candleRange) : 0.0
+upWickRatio = candleRange > 0 ? (upperWick / candleRange) : 0.0
+dnWickRatio = candleRange > 0 ? (lowerWick / candleRange) : 0.0
+
+// ====================================================================
+// 3. SESSION TIMING (MT4 Server Time Format)
+// ====================================================================
+isInSession(string sess) =>
+    not na(time(timeframe.period, sess, tzInput))
+
+isAsianInit = isInSession("0000-0230:23456")
+isAsianTrad = isInSession("0230-0600:23456")
+isLondon    = isInSession("0800-1130:23456")
+isNY        = isInSession("1500-1730:23456")
+
+// Session Background Painting
+bgcolor(showSessionBg and isAsianTrad ? color.new(#64b5f6, 92) : na, title="Asian Session BG")
+bgcolor(showSessionBg and isLondon ? color.new(#ffd54f, 92) : na, title="London Session BG")
+bgcolor(showSessionBg and isNY ? color.new(#ba68c8, 92) : na, title="New York Session BG")
+
+// ====================================================================
+// 4. DYNAMIC ASIAN RANGE BOX & EXTENDED EQUILIBRIUM LINES
+// ====================================================================
+var float asianHigh     = na
+var float asianLow      = na
+var int   asianStartBar = na
+var box   asianBox      = na
+var line  asianHiLine   = na
+var line  asianLoLine   = na
+var line  asianMidLine  = na
+
+newDay = ta.change(time("D", tzInput)) != 0
+
+if newDay
+    asianHigh     := na
+    asianLow      := na
+    asianStartBar := bar_index
+    asianBox      := na
+    asianHiLine   := na
+    asianLoLine   := na
+    asianMidLine  := na
+
+// Developing Asian Accumulation Session (00:00 - 02:30)
+if isAsianInit
+    if na(asianHigh) or high > asianHigh
+        asianHigh := high
+    if na(asianLow) or low < asianLow
+        asianLow := low
+    
+    // Live Developing Asian Range Box (Updates dynamically every bar/tick!)
+    if showAsianBox
+        if na(asianBox)
+            asianBox := box.new(left=asianStartBar, top=asianHigh, right=bar_index + 1, bottom=asianLow, border_color=color.new(#29b6f6, 30), border_width=1, bgcolor=color.new(#29b6f6, 92))
+        else
+            box.set_top(asianBox, asianHigh)
+            box.set_bottom(asianBox, asianLow)
+            box.set_right(asianBox, bar_index + 1)
+
+asianRange = not na(asianHigh) and not na(asianLow) ? (asianHigh - asianLow) : 0.0
+asianMid   = not na(asianHigh) and not na(asianLow) ? ((asianHigh + asianLow) / 2.0) : na
+isSqueeze  = asianRange >= asianMinRange and asianRange <= asianMaxRange
+
+// Dynamic Asian Levels Extension (Stretches across London & NY sessions!)
+if not isAsianInit and not na(asianHigh) and not na(asianLow)
+    if showAsianLines
+        string hiTxt  = showAsianLabels ? ("Asian High: $" + str.tostring(asianHigh, "#.##")) : ""
+        string loTxt  = showAsianLabels ? ("Asian Low: $" + str.tostring(asianLow, "#.##")) : ""
+        string midTxt = showAsianLabels ? ("Equilibrium (50%): $" + str.tostring(asianMid, "#.##")) : ""
+
+        if na(asianHiLine)
+            asianHiLine  := line.new(asianStartBar, asianHigh, bar_index + 3, asianHigh, color=color.new(#00b0ff, 10), style=line.style_dashed, width=2)
+            asianLoLine  := line.new(asianStartBar, asianLow, bar_index + 3, asianLow, color=color.new(#00b0ff, 10), style=line.style_dashed, width=2)
+            asianMidLine := line.new(asianStartBar, asianMid, bar_index + 3, asianMid, color=color.new(#90caf9, 30), style=line.style_dotted, width=1)
+            if showAsianLabels
+                line.set_text(asianHiLine, hiTxt)
+                line.set_text_color(asianHiLine, color.white)
+                line.set_text_size(asianHiLine, size.small)
+                line.set_text(asianLoLine, loTxt)
+                line.set_text_color(asianLoLine, color.white)
+                line.set_text_size(asianLoLine, size.small)
+                line.set_text(asianMidLine, midTxt)
+                line.set_text_color(asianMidLine, color.new(color.white, 30))
+                line.set_text_size(asianMidLine, size.tiny)
+        else
+            // DYNAMIC UPDATE: Constantly stretches line tip forward with the live chart!
+            line.set_x2(asianHiLine, bar_index + 3)
+            line.set_x2(asianLoLine, bar_index + 3)
+            line.set_x2(asianMidLine, bar_index + 3)
+            if showAsianLabels
+                line.set_text(asianHiLine, hiTxt)
+                line.set_text(asianLoLine, loTxt)
+                line.set_text(asianMidLine, midTxt)
+
+// ====================================================================
+// 5. SIGNALS GENERATION LOGIC
+// ====================================================================
+var int lastSignalBar = 0
+bool isBarValid = (signalTriggerMode == "Bar Close (Confirmed - No Repaint)") ? barstate.isconfirmed : true
+
+// --- ENGINE A: Asian Squeeze Sweeper (02:30 - 06:00) ---
+asianBuyCond = enableAsian and isAsianTrad and isSqueeze and isH1Bull and (low <= (asianLow - asianMinSweep)) and (close >= asianLow) and (dnWickRatio >= asianMinWickRatio)
+asianBuy = asianBuyCond and (bar_index != lastSignalBar) and isBarValid
+
+asianSellCond = enableAsian and isAsianTrad and isSqueeze and isH1Bear and (high >= (asianHigh + asianMinSweep)) and (close <= asianHigh) and (upWickRatio >= asianMinWickRatio)
+asianSell = asianSellCond and (bar_index != lastSignalBar) and isBarValid
+
+// --- ENGINE B: London Institutional Sniper (08:00 - 11:30) ---
+londonBuyCond = enableLondon and isLondon and not na(asianHigh) and (close > (asianHigh + londonPenetration)) and (close > ema200_m15) and (ema50_m15 > ema200_m15) and (bodyRatio >= londonMinBodyRatio) and (close > open) and (rvol >= londonRVOL_Mult)
+londonBuy = londonBuyCond and (bar_index != lastSignalBar) and isBarValid
+
+londonSellCond = enableLondon and isLondon and not na(asianLow) and (close < (asianLow - londonPenetration)) and (close < ema200_m15) and (ema50_m15 < ema200_m15) and (bodyRatio >= londonMinBodyRatio) and (close < open) and (rvol >= londonRVOL_Mult)
+londonSell = londonSellCond and (bar_index != lastSignalBar) and isBarValid
+
+// --- ENGINE C: New York Confirmed Reversal (15:00 - 17:30) ---
+nyTestedBuy  = (low <= (ema50_m15 + 1.50)) and (close > ema50_m15)
+nyEngulfBuy  = (close > open) and (close >= open[1]) and (bodyRatio >= 0.50) and (upWickRatio <= 0.30)
+nyBuyCond    = enableNY and isNY and isH1Bull and (close > ema200_m15) and (ema50_m15 > ema200_m15) and nyTestedBuy and nyEngulfBuy and (adxVal >= ny_MinADX) and (rvol >= ny_RVOL_Mult)
+nyBuy        = nyBuyCond and (bar_index != lastSignalBar) and isBarValid
+
+nyTestedSell = (high >= (ema50_m15 - 1.50)) and (close < ema50_m15)
+nyEngulfSell = (close < open) and (close <= open[1]) and (bodyRatio >= 0.50) and (dnWickRatio <= 0.30)
+nySellCond   = enableNY and isNY and isH1Bear and (close < ema200_m15) and (ema50_m15 < ema200_m15) and nyTestedSell and nyEngulfSell and (adxVal >= ny_MinADX) and (rvol >= ny_RVOL_Mult)
+nySell       = nySellCond and (bar_index != lastSignalBar) and isBarValid
+
+// Native Plotshape Markers for Alert System
+anyBuySignal  = asianBuy or londonBuy or nyBuy
+anySellSignal = asianSell or londonSell or nySell
+plotshape(anyBuySignal, title="Any BUY Signal Marker", style=shape.triangleup, location=location.belowbar, color=color.new(#00e676, 0), size=size.small)
+plotshape(anySellSignal, title="Any SELL Signal Marker", style=shape.triangledown, location=location.abovebar, color=color.new(#ff5252, 0), size=size.small)
+
+// ====================================================================
+// 6. DYNAMIC ACTIVE TRADE TRACKER (LIVE TP / SL PROJECTION)
+// ====================================================================
+var bool  tradeActive    = false
+var int   tradeStartBar  = na
+var int   tradeDir       = 0       // 1 = BUY, -1 = SELL
+var float tradeEntry     = na
+var float tradeTP        = na
+var float tradeSL        = na
+var string tradeStrategy = ""
+var line  lineEntry      = na
+var line  lineTP         = na
+var line  lineSL         = na
+var box   boxProfitZone  = na
+var box   boxLossZone    = na
+
+// Register and Plot New Signal Setup
+if anyBuySignal or anySellSignal
+    lastSignalBar := bar_index
+    tradeActive   := true
+    tradeStartBar := bar_index
+    tradeEntry    := close
+    tradeDir      := anyBuySignal ? 1 : -1
+    
+    float tpDelta = (londonBuy or londonSell) ? londonTP_USD : ((nyBuy or nySell) ? nyTP_USD : asianTP_USD)
+    float slDelta = (londonBuy or londonSell) ? londonSL_USD : ((nyBuy or nySell) ? nySL_USD : asianSL_USD)
+    tradeStrategy := (londonBuy or londonSell) ? "London Sniper" : ((nyBuy or nySell) ? "NY Reversal" : "Asian Sweeper")
+    
+    tradeTP := tradeDir == 1 ? (tradeEntry + tpDelta) : (tradeEntry - tpDelta)
+    tradeSL := tradeDir == 1 ? (tradeEntry - slDelta) : (tradeEntry + slDelta)
+    
+    // Entry Label
+    string dirText = tradeDir == 1 ? "BUY" : "SELL"
+    color badgeCol = (tradeStrategy == "London Sniper") ? (tradeDir == 1 ? #00c853 : #d50000) : ((tradeStrategy == "NY Reversal") ? (tradeDir == 1 ? #2979ff : #aa00ff) : (tradeDir == 1 ? #00e676 : #ff5252))
+    string badgeMsg = "🎯 [" + tradeStrategy + " " + dirText + "]\nEntry: $" + str.tostring(tradeEntry, "#.##") + "\nTP: $" + str.tostring(tradeTP, "#.##") + "\nSL: $" + str.tostring(tradeSL, "#.##")
+    label.new(bar_index, tradeDir == 1 ? low : high, badgeMsg, color=color.new(badgeCol, 0), textcolor=color.white, style=tradeDir == 1 ? label.style_label_up : label.style_label_down, size=size.normal)
+    
+    // Launch Dynamic Visual Lines & Zones
+    if showTradeLines
+        lineEntry := line.new(tradeStartBar, tradeEntry, bar_index + 2, tradeEntry, color=color.new(color.white, 30), width=1, style=line.style_dashed)
+        lineTP    := line.new(tradeStartBar, tradeTP, bar_index + 2, tradeTP, color=color.new(#00e676, 10), width=2, style=line.style_solid)
+        lineSL    := line.new(tradeStartBar, tradeSL, bar_index + 2, tradeSL, color=color.new(#ff5252, 10), width=2, style=line.style_solid)
+        line.set_text(lineTP, "🎯 TP Target: $" + str.tostring(tradeTP, "#.##"))
+        line.set_text_color(lineTP, color.new(#00e676, 0))
+        line.set_text_size(lineTP, size.small)
+        line.set_text(lineSL, "🛑 SL Stop: $" + str.tostring(tradeSL, "#.##"))
+        line.set_text_color(lineSL, color.new(#ff5252, 0))
+        line.set_text_size(lineSL, size.small)
+
+    if showTradeZones
+        if tradeDir == 1
+            boxProfitZone := box.new(left=tradeStartBar, top=tradeTP, right=bar_index + 2, bottom=tradeEntry, border_color=color.new(#00e676, 60), bgcolor=color.new(#00e676, 90))
+            boxLossZone   := box.new(left=tradeStartBar, top=tradeEntry, right=bar_index + 2, bottom=tradeSL, border_color=color.new(#ff5252, 60), bgcolor=color.new(#ff5252, 90))
+        else
+            boxProfitZone := box.new(left=tradeStartBar, top=tradeEntry, right=bar_index + 2, bottom=tradeTP, border_color=color.new(#00e676, 60), bgcolor=color.new(#00e676, 90))
+            boxLossZone   := box.new(left=tradeStartBar, top=tradeSL, right=bar_index + 2, bottom=tradeEntry, border_color=color.new(#ff5252, 60), bgcolor=color.new(#ff5252, 90))
+
+// Dynamic Progress Tracking on Every Subsequent Bar
+if tradeActive and not na(tradeStartBar) and (bar_index > tradeStartBar)
+    if showTradeLines
+        line.set_x2(lineEntry, bar_index + 2)
+        line.set_x2(lineTP, bar_index + 2)
+        line.set_x2(lineSL, bar_index + 2)
+    if showTradeZones
+        box.set_right(boxProfitZone, bar_index + 2)
+        box.set_right(boxLossZone, bar_index + 2)
+    
+    // Check Real-Time Hit of TP or SL
+    bool isTPReached = (tradeDir == 1 and high >= tradeTP) or (tradeDir == -1 and low <= tradeTP)
+    bool isSLReached = (tradeDir == 1 and low <= tradeSL)  or (tradeDir == -1 and high >= tradeSL)
+    
+    if isTPReached
+        tradeActive := false
+        string winMsg = "✅ [TP HIT TARGET!]\nBanked: +$" + str.tostring(math.abs(tradeTP - tradeEntry), "#.##")
+        label.new(bar_index, tradeTP, winMsg, color=color.new(#00c853, 0), textcolor=color.white, style=tradeDir == 1 ? label.style_label_down : label.style_label_up, size=size.small)
+    else if isSLReached
+        tradeActive := false
+        string lossMsg = "❌ [SL STOPPED OUT]\nRisk: -$" + str.tostring(math.abs(tradeSL - tradeEntry), "#.##")
+        label.new(bar_index, tradeSL, lossMsg, color=color.new(#d50000, 0), textcolor=color.white, style=tradeDir == 1 ? label.style_label_up : label.style_label_down, size=size.small)
+
+// ====================================================================
+// 7. INSTITUTIONAL STATUS DASHBOARD TABLE
+// ====================================================================
+var table db = table.new(position.top_right, 2, 8, bgcolor=color.new(#1e222d, 10), border_color=color.new(#374151, 30), border_width=1)
+
+if showDashboard and barstate.islast
+    table.cell(db, 0, 0, "GOLD SNIPER v6.3.2", bgcolor=color.new(#ffd700, 20), text_color=color.white, text_size=size.small)
+    table.cell(db, 1, 0, "DYNAMIC APEX", bgcolor=color.new(#ffd700, 20), text_color=color.yellow, text_size=size.small)
+    
+    // Active Session
+    string activeSess = isLondon ? "🇬🇧 LONDON SNIPER" : (isNY ? "🗽 NEW YORK REVERSAL" : (isAsianTrad ? "🌅 ASIAN SWEEPER" : (isAsianInit ? "💤 ASIAN ACCUM" : "🔒 CLOSED")))
+    color sessCol = isLondon ? color.yellow : (isNY ? color.fuchsia : (isAsianTrad ? color.aqua : color.gray))
+    table.cell(db, 0, 1, "Active Session", text_color=color.white, text_size=size.small)
+    table.cell(db, 1, 1, activeSess, text_color=sessCol, text_size=size.small)
+
+    // Asian Range & Squeeze
+    string rangeTxt = str.tostring(asianRange, "#.##") + " USD"
+    string sqTxt = isSqueeze ? " (SQUEEZE OK)" : (asianRange > asianMaxRange ? " (TOO WIDE)" : " (EXPANDING)")
+    table.cell(db, 0, 2, "Asian Range (M15)", text_color=color.white, text_size=size.small)
+    table.cell(db, 1, 2, rangeTxt + sqTxt, text_color=isSqueeze ? color.green : color.orange, text_size=size.small)
+
+    // H1 Macro Trend
+    string h1Trend = isH1Bull ? "BULLISH 🟢" : (isH1Bear ? "BEARISH 🔴" : "NEUTRAL ⚪")
+    table.cell(db, 0, 3, "H1 Macro Trend", text_color=color.white, text_size=size.small)
+    table.cell(db, 1, 3, h1Trend, text_color=isH1Bull ? color.green : color.red, text_size=size.small)
+
+    // RVOL
+    string rvolTxt = str.tostring(rvol, "#.##") + "x"
+    table.cell(db, 0, 4, "RVOL vs SMA20", text_color=color.white, text_size=size.small)
+    table.cell(db, 1, 4, rvolTxt, text_color=rvol >= 1.1 ? color.green : color.gray, text_size=size.small)
+
+    // ADX
+    string adxTxt = str.tostring(adxVal, "#.#")
+    table.cell(db, 0, 5, "ADX (14)", text_color=color.white, text_size=size.small)
+    table.cell(db, 1, 5, adxTxt, text_color=adxVal >= 22 ? color.green : color.gray, text_size=size.small)
+
+    // Active Live Trade Status
+    string tradeStatusTxt = tradeActive ? (tradeStrategy + " " + (tradeDir == 1 ? "BUY" : "SELL") + " @ $" + str.tostring(tradeEntry, "#.##")) : "Scanning Setups..."
+    color tradeStatusCol = tradeActive ? (tradeDir == 1 ? color.green : color.red) : color.gray
+    table.cell(db, 0, 6, "Live Position", text_color=color.white, text_size=size.small)
+    table.cell(db, 1, 6, tradeStatusTxt, text_color=tradeStatusCol, text_size=size.small)
+
+    // Real-Time PnL Tracker of Active Trade
+    float currentPnL = tradeActive ? ((close - tradeEntry) * tradeDir) : 0.0
+    string pnlTxt = tradeActive ? ((currentPnL >= 0 ? "+$" : "-$") + str.tostring(math.abs(currentPnL), "#.##")) : "$0.00"
+    table.cell(db, 0, 7, "Running Profit", text_color=color.white, text_size=size.small)
+    table.cell(db, 1, 7, pnlTxt, text_color=currentPnL >= 0 ? color.green : color.red, text_size=size.small)
+
+// ====================================================================
+// 8. ALERTS
+// ====================================================================
+alertcondition(londonBuy, title="London Sniper BUY", message="🎯 [Gold Sniper] London Institutional BUY! Price: {{close}}")
+alertcondition(londonSell, title="London Sniper SELL", message="🎯 [Gold Sniper] London Institutional SELL! Price: {{close}}")
+alertcondition(nyBuy, title="New York Reversal BUY", message="🗽 [Gold Sniper] New York Reversal BUY! Price: {{close}}")
+alertcondition(nySell, title="New York Reversal SELL", message="🗽 [Gold Sniper] New York Reversal SELL! Price: {{close}}")
+alertcondition(asianBuy, title="Asian Scalp BUY", message="🌅 [Gold Sniper] Asian Sweeper BUY! Price: {{close}}")
+alertcondition(asianSell, title="Asian Scalp SELL", message="🌅 [Gold Sniper] Asian Sweeper SELL! Price: {{close}}")

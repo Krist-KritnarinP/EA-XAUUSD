@@ -1,0 +1,74 @@
+# ==============================================================================
+# SECRETS & CREDENTIALS (CRITICAL - DO NOT COMMIT OR LEAK)
+# ==============================================================================
+config.json
+.env
+*.env
+*.env.*
+*.key
+*.pem
+*.secret
+credentials.json
+token.json
+
+# ==============================================================================
+# PYTHON RUNTIME & CACHES
+# ==============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+.Python
+env/
+venv/
+.venv/
+
+# ==============================================================================
+# RUNTIME LOGS, CACHE & TEMPORARY FILES
+# ==============================================================================
+*.log
+*.tmp
+*.bak
+run_*.txt
+compile_*.log
+c1.log
+c2.log
+breaking_seen_cache.json
+calendar_cache.json
+signals_state.json
+agent_runtime_state.json
+poi_agent_state.json
+
+# ==============================================================================
+# LARGE DATA EXPORTS, SPREADSHEETS & BACKTEST DUMPS
+# ==============================================================================
+*.csv
+*.tsv
+*.hst
+*.fxt
+*parsed_trades*.json
+*forensic*.json
+*audit*.json
+*all_trades*.json
+comparison_monthly_session.json
+
+# ==============================================================================
+# MT4 COMPILED BINARIES (Source code .mq4 is tracked)
+# ==============================================================================
+*.ex4
+*.dll
+*.exe
+
+# ==============================================================================
+# LOCAL SCRATCH & ARCHIVES
+# ==============================================================================
+scratch/
+_archive_scratch/
+
+# ==============================================================================
+# OS & IDE ARTIFACTS
+# ==============================================================================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

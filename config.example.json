@@ -1,0 +1,22 @@
+{
+  "system_version": "Gold POI Sniper v3.5",
+  "mt4_files_dir": "C:/Path/To/MetaTrader4/MQL4/Files",
+  "symbol": "GOLD",
+  "enable_macro_news_sentinel": true,
+  "news_stand_down_mins_before": 30,
+  "news_stand_down_mins_after": 30,
+  "enable_morning_macro_briefing": true,
+  "enable_periodic_heartbeat": true,
+  "heartbeat_interval_mins": 30,
+  "jackpot_profit_lock_usd": 100.0,
+  "discord_webhook_morning_briefing": "https://discord.com/api/webhooks/YOUR_WEBHOOK_URL_HERE",
+  "discord_webhook_user_trades": "https://discord.com/api/webhooks/YOUR_WEBHOOK_URL_HERE",
+  "discord_webhook_orders": "https://discord.com/api/webhooks/YOUR_WEBHOOK_URL_HERE",
+  "discord_webhook_url": "https://discord.com/api/webhooks/YOUR_WEBHOOK_URL_HERE",
+  "discord_webhook_quant_5sciences": "https://discord.com/api/webhooks/YOUR_WEBHOOK_URL_HERE",
+  "discord_webhook_news_guard": "https://discord.com/api/webhooks/YOUR_WEBHOOK_URL_HERE",
+  "discord_webhook_signals": "https://discord.com/api/webhooks/YOUR_WEBHOOK_URL_HERE",
+  "discord_webhook_heartbeat": "https://discord.com/api/webhooks/YOUR_WEBHOOK_URL_HERE",
+  "discord_webhook_briefing": "https://discord.com/api/webhooks/YOUR_WEBHOOK_URL_HERE",
+  "gemini_api_key": "YOUR_GEMINI_API_KEY_HERE"
+}
